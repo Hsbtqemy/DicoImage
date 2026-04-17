@@ -492,56 +492,206 @@ def build_tab_affinage(nb: ttk.Notebook):
     ctrl = ttk.Frame(right)
     ctrl.grid(row=1, column=0, sticky="ew", pady=(10, 0))
     ctrl.columnconfigure(1, weight=1)
-    ctrl.columnconfigure(3, weight=1)
+    ctrl.columnconfigure(5, weight=1)
 
-    state = {"img": None, "path": None, "tk_ref": None, "paths": []}
+    state = {
+        "img": None, "path": None, "tk_ref": None, "paths": [],
+        "scale": 1.0, "off_x": 0, "off_y": 0, "disp_w": 0, "disp_h": 0,
+        "split_lines": [],   # Y coords dans l'image originale
+        "split_mode": False,
+    }
 
     v_top = tk.IntVar(value=0)
     v_bot = tk.IntVar(value=0)
     v_lft = tk.IntVar(value=0)
     v_rgt = tk.IntVar(value=0)
+
     lbl_size = ttk.Label(right, text="", foreground="gray", anchor="center")
     lbl_size.grid(row=2, column=0, sticky="ew")
 
+    # ── Refresh canvas ─────────────────────────────────────
     def refresh_canvas(*_):
         img = state["img"]
         if img is None:
             return
         preview = make_crop_preview(img, v_top.get(), v_bot.get(),
                                     v_lft.get(), v_rgt.get())
-        fitted, _ = fit_to(preview, CANVAS_W2, CANVAS_H2)
+        w_img, h_img = preview.size
+        scale = min(CANVAS_W2 / w_img, CANVAS_H2 / h_img)
+        new_w, new_h = int(w_img * scale), int(h_img * scale)
+        fitted = preview.resize((new_w, new_h), Image.LANCZOS)
+
+        off_x = (CANVAS_W2 - new_w) // 2
+        off_y = (CANVAS_H2 - new_h) // 2
+        state.update(scale=scale, off_x=off_x, off_y=off_y,
+                     disp_w=new_w, disp_h=new_h)
+
         tk_img = ImageTk.PhotoImage(fitted)
         state["tk_ref"] = tk_img
         canvas.delete("all")
-        canvas.create_image(CANVAS_W2 // 2, CANVAS_H2 // 2,
-                            anchor="center", image=tk_img)
+        canvas.create_image(off_x, off_y, anchor="nw", image=tk_img)
+
+        # Lignes de scission
+        for iy in state["split_lines"]:
+            cy = off_y + int(iy * scale)
+            canvas.create_line(off_x, cy, off_x + new_w, cy,
+                               fill="#FFB300", width=2, dash=(6, 3), tags="split")
+
+    # ── Sliders crop ───────────────────────────────────────
+    s_top = s_bot = s_lft = s_rgt = None
 
     def make_slider(label, var, row, col_offset=0):
         c = col_offset
         ttk.Label(ctrl, text=label).grid(row=row, column=c, sticky="w", pady=3)
         val_lbl = ttk.Label(ctrl, text="0", width=4, anchor="e")
-        val_lbl.grid(row=row, column=c + 2, padx=(2, 12))
+        val_lbl.grid(row=row, column=c + 2, padx=(2, 8))
 
         def on_change(*_):
             var.set(int(var.get()))
             val_lbl.configure(text=str(var.get()))
             refresh_canvas()
 
-        ttk.Scale(ctrl, from_=0, to=200, variable=var,
-                  orient="horizontal", command=on_change).grid(
-            row=row, column=c + 1, sticky="ew", padx=4)
+        s = ttk.Scale(ctrl, from_=0, to=200, variable=var,
+                      orient="horizontal", command=on_change)
+        s.grid(row=row, column=c + 1, sticky="ew", padx=4)
+        return s, val_lbl
 
-    make_slider("Haut",   v_top, 0, col_offset=0)
-    make_slider("Bas",    v_bot, 1, col_offset=0)
-    make_slider("Gauche", v_lft, 0, col_offset=4)
-    make_slider("Droite", v_rgt, 1, col_offset=4)
-    ctrl.columnconfigure(1, weight=1)
-    ctrl.columnconfigure(5, weight=1)
+    s_top, lv_top = make_slider("Haut",   v_top, 0, col_offset=0)
+    s_bot, lv_bot = make_slider("Bas",    v_bot, 1, col_offset=0)
+    s_lft, lv_lft = make_slider("Gauche", v_lft, 0, col_offset=4)
+    s_rgt, lv_rgt = make_slider("Droite", v_rgt, 1, col_offset=4)
 
-    btn_save = ttk.Button(right, text="Sauvegarder le crop")
-    btn_save.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+    # ── Barre scission ─────────────────────────────────────
+    split_bar = ttk.Frame(right)
+    split_bar.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+    split_bar.columnconfigure(0, weight=1)
+    split_bar.columnconfigure(1, weight=1)
+    split_bar.columnconfigure(2, weight=1)
 
-    # ── Chargement d'un dossier ────────────────────────────
+    btn_mode  = ttk.Button(split_bar, text="✂  Mode scission")
+    btn_clear = ttk.Button(split_bar, text="Effacer lignes")
+    btn_split = ttk.Button(split_bar, text="Scinder")
+    btn_mode .grid(row=0, column=0, sticky="ew", padx=(0, 4))
+    btn_clear.grid(row=0, column=1, sticky="ew", padx=4)
+    btn_split.grid(row=0, column=2, sticky="ew", padx=(4, 0))
+
+    btn_save = ttk.Button(right, text="Sauvegarder le crop  →  image suivante")
+    btn_save.grid(row=4, column=0, sticky="ew", pady=(6, 0))
+
+    # ── Mode scission toggle ───────────────────────────────
+    def toggle_split_mode():
+        state["split_mode"] = not state["split_mode"]
+        if state["split_mode"]:
+            btn_mode.configure(text="✂  Mode scission  ●")
+            canvas.configure(cursor="crosshair")
+        else:
+            btn_mode.configure(text="✂  Mode scission")
+            canvas.configure(cursor="")
+
+    btn_mode.configure(command=toggle_split_mode)
+
+    def effacer_lignes():
+        state["split_lines"].clear()
+        refresh_canvas()
+
+    btn_clear.configure(command=effacer_lignes)
+
+    # ── Clic sur le canvas (pose/retire une ligne) ─────────
+    def on_canvas_click(event):
+        if not state["split_mode"] or state["img"] is None:
+            return
+        off_x = state["off_x"]
+        off_y = state["off_y"]
+        disp_w = state["disp_w"]
+        disp_h = state["disp_h"]
+        scale  = state["scale"]
+
+        if not (off_x <= event.x <= off_x + disp_w and
+                off_y <= event.y <= off_y + disp_h):
+            return
+
+        iy = int((event.y - off_y) / scale)
+        h_img = state["img"].size[1]
+        iy = max(1, min(h_img - 1, iy))
+
+        # Retirer si proche d'une ligne existante
+        thresh = max(3, int(5 / scale))
+        for existing in list(state["split_lines"]):
+            if abs(existing - iy) <= thresh:
+                state["split_lines"].remove(existing)
+                refresh_canvas()
+                return
+
+        state["split_lines"].append(iy)
+        state["split_lines"].sort()
+        refresh_canvas()
+
+    canvas.bind("<Button-1>", on_canvas_click)
+
+    # ── Scinder ────────────────────────────────────────────
+    def scinder():
+        img   = state["img"]
+        path  = state["path"]
+        lines = state["split_lines"]
+        if img is None or path is None:
+            return
+        if not lines:
+            messagebox.showinfo("Scinder",
+                "Aucune ligne posée.\nCliquez sur l'image en mode scission.")
+            return
+
+        w, h  = img.size
+        cuts  = [0] + sorted(lines) + [h]
+        folder = Path(v_folder.get())
+        stem, suffix = path.stem, path.suffix
+
+        new_paths = []
+        for i, (y0, y1) in enumerate(zip(cuts, cuts[1:]), start=1):
+            if y1 - y0 < 4:
+                continue
+            piece = img.crop((0, y0, w, y1)).convert("RGB")
+            out_p = path.parent / f"{stem}_p{i:02d}{suffix}"
+            piece.save(out_p, "JPEG", quality=85)
+            new_paths.append(out_p)
+
+        if not new_paths:
+            messagebox.showerror("Erreur", "Aucun fragment valide généré.")
+            return
+
+        sel = listbox.curselection()
+        idx = sel[0] if sel else state["paths"].index(path)
+        path.unlink()
+        state["paths"].pop(idx)
+        listbox.delete(idx)
+
+        for i, np_ in enumerate(new_paths):
+            state["paths"].insert(idx + i, np_)
+            try:
+                rel = np_.relative_to(folder)
+            except ValueError:
+                rel = np_.name
+            listbox.insert(idx + i, str(rel))
+
+        state["split_lines"].clear()
+        lbl_count.configure(text=f"{len(state['paths'])} image(s)")
+        listbox.selection_clear(0, tk.END)
+        listbox.selection_set(idx)
+        listbox.see(idx)
+        charger_image(idx)
+
+    btn_split.configure(command=scinder)
+
+    # ── Navigation ─────────────────────────────────────────
+    def go_to(idx):
+        n = listbox.size()
+        if n == 0 or idx < 0 or idx >= n:
+            return
+        listbox.selection_clear(0, tk.END)
+        listbox.selection_set(idx)
+        listbox.see(idx)
+        charger_image(idx)
+
+    # ── Chargement dossier ─────────────────────────────────
     def charger_dossier():
         folder = Path(v_folder.get())
         if not folder.exists():
@@ -549,40 +699,40 @@ def build_tab_affinage(nb: ttk.Notebook):
             return
         paths = sorted(folder.rglob("*.jpg")) + sorted(folder.rglob("*.jpeg")) \
               + sorted(folder.rglob("*.JPG")) + sorted(folder.rglob("*.JPEG"))
-        # dédoublonner en gardant l'ordre
         seen = set()
         paths = [p for p in paths if not (p in seen or seen.add(p))]
         state["paths"] = paths
         listbox.delete(0, tk.END)
         for p in paths:
-            listbox.insert(tk.END, p.relative_to(folder))
+            try:
+                rel = p.relative_to(folder)
+            except ValueError:
+                rel = p.name
+            listbox.insert(tk.END, str(rel))
         lbl_count.configure(text=f"{len(paths)} image(s)")
         if paths:
-            listbox.selection_set(0)
-            charger_image(0)
+            go_to(0)
 
     btn_charger.configure(command=charger_dossier)
 
-    # ── Chargement d'une image ─────────────────────────────
+    # ── Chargement image ───────────────────────────────────
     def charger_image(idx):
         paths = state["paths"]
         if not paths or idx >= len(paths):
             return
         path = paths[idx]
-        img = Image.open(path)
-        state["img"] = img
-        state["path"] = path
+        img  = Image.open(path)
+        state.update(img=img, path=path, split_lines=[])
         w, h = img.size
         lbl_size.configure(text=f"{path.name}  •  {w}×{h} px")
-        # réinitialiser les sliders et mettre à jour la plage max
-        for var in (v_top, v_bot, v_lft, v_rgt):
+        for var, lv in [(v_top, lv_top), (v_bot, lv_bot),
+                        (v_lft, lv_lft), (v_rgt, lv_rgt)]:
             var.set(0)
-        for slider in ctrl.winfo_children():
-            if isinstance(slider, ttk.Scale):
-                slider.configure(to=min(h // 2, 300) if slider in
-                                 [ctrl.grid_slaves(row=0, column=1)[0] if ctrl.grid_slaves(row=0, column=1) else None,
-                                  ctrl.grid_slaves(row=1, column=1)[0] if ctrl.grid_slaves(row=1, column=1) else None]
-                                 else min(w // 2, 300))
+            lv.configure(text="0")
+        for sl in (s_top, s_bot):
+            sl.configure(to=max(1, min(h // 2, 300)))
+        for sl in (s_lft, s_rgt):
+            sl.configure(to=max(1, min(w // 2, 300)))
         refresh_canvas()
 
     def on_select(event):
@@ -597,22 +747,16 @@ def build_tab_affinage(nb: ttk.Notebook):
         if not sel:
             return
         idx = sel[0]
-        if event.keysym == "Down" and idx < listbox.size() - 1:
-            listbox.selection_clear(idx)
-            listbox.selection_set(idx + 1)
-            listbox.see(idx + 1)
-            charger_image(idx + 1)
-        elif event.keysym == "Up" and idx > 0:
-            listbox.selection_clear(idx)
-            listbox.selection_set(idx - 1)
-            listbox.see(idx - 1)
-            charger_image(idx - 1)
+        if event.keysym == "Down":
+            go_to(idx + 1)
+        elif event.keysym == "Up":
+            go_to(idx - 1)
 
     listbox.bind("<KeyPress>", on_key)
 
-    # ── Sauvegarder ───────────────────────────────────────
+    # ── Sauvegarder + passer au suivant ───────────────────
     def sauvegarder():
-        img = state["img"]
+        img  = state["img"]
         path = state["path"]
         if img is None or path is None:
             return
@@ -628,35 +772,40 @@ def build_tab_affinage(nb: ttk.Notebook):
             return
         cropped = img.crop(box).convert("RGB")
         cropped.save(path, "JPEG", quality=85)
-        # Recharger pour refléter le nouveau contenu
-        state["img"] = Image.open(path)
-        v_top.set(0); v_bot.set(0); v_lft.set(0); v_rgt.set(0)
-        refresh_canvas()
-        lbl_size.configure(text=f"{path.name}  •  {cropped.size[0]}×{cropped.size[1]} px  ✓ sauvegardé")
+
+        sel = listbox.curselection()
+        idx = sel[0] if sel else 0
+        lbl_size.configure(
+            text=f"{path.name}  •  {cropped.size[0]}×{cropped.size[1]} px  ✓")
+
+        # Avancer à l'image suivante
+        if idx + 1 < listbox.size():
+            go_to(idx + 1)
+        else:
+            state["img"] = Image.open(path)
+            refresh_canvas()
 
     btn_save.configure(command=sauvegarder)
 
     # ── Supprimer ─────────────────────────────────────────
     def supprimer():
         path = state["path"]
-        sel = listbox.curselection()
+        sel  = listbox.curselection()
         if path is None or not sel:
             return
-        if not messagebox.askyesno("Supprimer", f"Supprimer définitivement :\n{path.name} ?"):
+        if not messagebox.askyesno("Supprimer",
+                                   f"Supprimer définitivement :\n{path.name} ?"):
             return
         idx = sel[0]
         path.unlink()
         state["paths"].pop(idx)
         listbox.delete(idx)
-        state["img"] = None
-        state["path"] = None
+        state.update(img=None, path=None)
         canvas.delete("all")
         lbl_size.configure(text="")
         n = listbox.size()
         if n:
-            new_idx = min(idx, n - 1)
-            listbox.selection_set(new_idx)
-            charger_image(new_idx)
+            go_to(min(idx, n - 1))
         lbl_count.configure(text=f"{len(state['paths'])} image(s)")
 
     btn_del.configure(command=supprimer)
