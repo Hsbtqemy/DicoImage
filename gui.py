@@ -463,9 +463,17 @@ def build_tab_affinage(nb: ttk.Notebook):
     lbl_count = ttk.Label(top, text="", foreground="gray")
     lbl_count.grid(row=0, column=4, padx=(10, 0))
 
+    v_filter = tk.StringVar(value="tous")
+    filter_bar = ttk.Frame(frame)
+    filter_bar.grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 6))
+    for text, val in [("Tous", "tous"), ("Blocs", "blocs"), ("Lignes", "lignes")]:
+        ttk.Radiobutton(filter_bar, text=text, variable=v_filter, value=val,
+                        command=lambda: appliquer_filtre()).pack(side="left", padx=6)
+
     # ── Panneau gauche : liste ─────────────────────────────
     left = ttk.Frame(frame)
-    left.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
+    frame.rowconfigure(2, weight=1)
+    left.grid(row=2, column=0, sticky="nsew", padx=(0, 10))
     left.rowconfigure(0, weight=1)
 
     scrollbar = ttk.Scrollbar(left, orient="vertical")
@@ -481,7 +489,7 @@ def build_tab_affinage(nb: ttk.Notebook):
 
     # ── Panneau droit : canvas + sliders ──────────────────
     right = ttk.Frame(frame)
-    right.grid(row=1, column=1, sticky="nsew")
+    right.grid(row=2, column=1, sticky="nsew")
     right.columnconfigure(0, weight=1)
     right.rowconfigure(0, weight=1)
 
@@ -495,7 +503,8 @@ def build_tab_affinage(nb: ttk.Notebook):
     ctrl.columnconfigure(5, weight=1)
 
     state = {
-        "img": None, "path": None, "tk_ref": None, "paths": [],
+        "img": None, "path": None, "tk_ref": None,
+        "all_paths": [], "paths": [],
         "scale": 1.0, "off_x": 0, "off_y": 0, "disp_w": 0, "disp_h": 0,
         "split_lines": [],   # Y coords dans l'image originale
         "split_mode": False,
@@ -692,15 +701,16 @@ def build_tab_affinage(nb: ttk.Notebook):
         charger_image(idx)
 
     # ── Chargement dossier ─────────────────────────────────
-    def charger_dossier():
-        folder = Path(v_folder.get())
-        if not folder.exists():
-            messagebox.showerror("Erreur", f"Dossier introuvable :\n{folder}")
-            return
-        paths = sorted(folder.rglob("*.jpg")) + sorted(folder.rglob("*.jpeg")) \
-              + sorted(folder.rglob("*.JPG")) + sorted(folder.rglob("*.JPEG"))
-        seen = set()
-        paths = [p for p in paths if not (p in seen or seen.add(p))]
+    def appliquer_filtre():
+        folder  = Path(v_folder.get())
+        filtre  = v_filter.get()
+        all_p   = state["all_paths"]
+        if filtre == "blocs":
+            paths = [p for p in all_p if "blocs" in p.parts]
+        elif filtre == "lignes":
+            paths = [p for p in all_p if "lignes" in p.parts]
+        else:
+            paths = list(all_p)
         state["paths"] = paths
         listbox.delete(0, tk.END)
         for p in paths:
@@ -712,6 +722,22 @@ def build_tab_affinage(nb: ttk.Notebook):
         lbl_count.configure(text=f"{len(paths)} image(s)")
         if paths:
             go_to(0)
+        else:
+            state.update(img=None, path=None)
+            canvas.delete("all")
+            lbl_size.configure(text="")
+
+    def charger_dossier():
+        folder = Path(v_folder.get())
+        if not folder.exists():
+            messagebox.showerror("Erreur", f"Dossier introuvable :\n{folder}")
+            return
+        exts = ("*.jpg", "*.jpeg", "*.JPG", "*.JPEG")
+        paths = [p for ext in exts for p in sorted(folder.rglob(ext))]
+        seen = set()
+        paths = [p for p in paths if not (p in seen or seen.add(p))]
+        state["all_paths"] = paths
+        appliquer_filtre()
 
     btn_charger.configure(command=charger_dossier)
 
