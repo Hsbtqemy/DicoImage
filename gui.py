@@ -159,7 +159,14 @@ def build_tab_extract(nb: ttk.Notebook, sv: dict):
 
     def lancer():
         try:
-            excl = {int(x.strip()) for x in sv["excl"].get().split(",") if x.strip()}
+            excl = set()
+            for part in sv["excl"].get().split(","):
+                part = part.strip()
+                if "-" in part:
+                    a, b = part.split("-", 1)
+                    excl.update(range(int(a.strip()), int(b.strip()) + 1))
+                elif part:
+                    excl.add(int(part))
         except ValueError:
             messagebox.showerror("Erreur", "Pages à exclure : entiers séparés par des virgules.")
             return
