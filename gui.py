@@ -756,9 +756,9 @@ def build_tab_affinage(nb: ttk.Notebook):
             var.set(0)
             lv.configure(text="0")
         for sl in (s_top, s_bot):
-            sl.configure(to=max(1, min(h // 2, 300)))
+            sl.configure(to=max(1, min(h // 2, 400)))
         for sl in (s_lft, s_rgt):
-            sl.configure(to=max(1, min(w // 2, 300)))
+            sl.configure(to=max(1, w // 2))
         refresh_canvas()
 
     def on_select(event):
